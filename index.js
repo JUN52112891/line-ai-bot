@@ -19,17 +19,18 @@ app.post("/webhook", async (req, res) => {
       const userText = event.message.text || "";
       const replyToken = event.replyToken;
 
-      let replyMessage = "お問い合わせありがとうございます。スタッフが確認のうえ順次ご返信いたします。";
+      let replyMessage =
+        "お問い合わせありがとうございます。\n個別確認が必要な内容のため、スタッフが確認のうえ順次ご返信いたします。";
 
       if (userText.includes("予約")) {
         replyMessage =
-          "ご予約をご希望ですね。\n下記ページより24時間ご予約いただけます。\n【予約URL】";
+          "ご予約をご希望ですね。\n下記ページより24時間ご予約いただけます。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
       } else if (userText.includes("変更")) {
         replyMessage =
-          "ご予約の変更をご希望ですね。\n下記ページよりお手続きをお願いいたします。\n【変更URL】";
+          "ご予約の変更をご希望ですね。\n下記ページよりお手続きをお願いいたします。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
       } else if (userText.includes("キャンセル")) {
         replyMessage =
-          "ご予約のキャンセルをご希望ですね。\n下記ページよりお手続きをお願いいたします。\n【キャンセルURL】";
+          "ご予約のキャンセルをご希望ですね。\n下記ページよりお手続きをお願いいたします。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
       }
 
       const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
