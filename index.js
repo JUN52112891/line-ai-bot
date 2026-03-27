@@ -16,7 +16,21 @@ app.post("/webhook", async (req, res) => {
       if (event.type !== "message") continue;
       if (event.message?.type !== "text") continue;
 
+      const userText = event.message.text || "";
       const replyToken = event.replyToken;
+
+      let replyMessage = "お問い合わせありがとうございます。スタッフが確認のうえ順次ご返信いたします。";
+
+      if (userText.includes("予約")) {
+        replyMessage =
+          "ご予約をご希望ですね。\n下記ページより24時間ご予約いただけます。\n【予約URL】";
+      } else if (userText.includes("変更")) {
+        replyMessage =
+          "ご予約の変更をご希望ですね。\n下記ページよりお手続きをお願いいたします。\n【変更URL】";
+      } else if (userText.includes("キャンセル")) {
+        replyMessage =
+          "ご予約のキャンセルをご希望ですね。\n下記ページよりお手続きをお願いいたします。\n【キャンセルURL】";
+      }
 
       const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
         method: "POST",
@@ -29,22 +43,15 @@ app.post("/webhook", async (req, res) => {
           messages: [
             {
               type: "text",
-              text: "メッセージを受け取りました。"
+              text: replyMessage
             }
           ]
         })
       });
 
       const responseText = await lineResponse.text();
-
       console.log("LINE reply status:", lineResponse.status);
       console.log("LINE reply body:", responseText);
-      console.log(
-        "TOKEN先頭5文字:",
-        process.env.LINE_CHANNEL_ACCESS_TOKEN
-          ? process.env.LINE_CHANNEL_ACCESS_TOKEN.slice(0, 5)
-          : "未設定"
-      );
     }
 
     res.sendStatus(200);
