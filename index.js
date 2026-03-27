@@ -70,7 +70,18 @@ app.post("/webhook", async (req, res) => {
       const userText = event.message.text || "";
       const replyToken = event.replyToken;
 
-      const result = await classifyMessage(userText);
+      let result;
+
+try {
+  result = await classifyMessage(userText);
+} catch (error) {
+  console.error("AI ERROR:", error);
+
+  result = {
+    intent: "handoff",
+    reply: ""
+  };
+}
       console.log("AI分類結果:", result);
 
       let replyMessage =
