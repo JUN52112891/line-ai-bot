@@ -6,8 +6,11 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 
 app.post("/webhook", (req, res) => {
-  console.log("LINEからメッセージ来た👇");
-  console.log(JSON.stringify(req.body, null, 2));
+  console.log("=== WEBHOOK HIT ===");
+  console.log("headers:", JSON.stringify(req.headers, null, 2));
+  console.log("body:", JSON.stringify(req.body, null, 2));
+  res.status(200).send("OK");
+});
 
   res.sendStatus(200);
 });
