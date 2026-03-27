@@ -54,11 +54,16 @@ ${userText}
 }
 
 async function loadFaqs() {
+  console.log("FAQ_SHEET_URL:", process.env.FAQ_SHEET_URL);
+
   const res = await fetch(process.env.FAQ_SHEET_URL);
-  if (!res.ok) {
-    throw new Error(`FAQ fetch failed: ${res.status}`);
-  }
-  return await res.json();
+  console.log("FAQ fetch status:", res.status);
+  console.log("FAQ fetch content-type:", res.headers.get("content-type"));
+
+  const rawText = await res.text();
+  console.log("FAQ raw first 200 chars:", rawText.slice(0, 200));
+
+  return JSON.parse(rawText);
 }
 
 function findFaqMatch(userText, faqs) {
