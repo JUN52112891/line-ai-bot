@@ -10,31 +10,62 @@ const openai = new OpenAI({
 
 app.use(express.json());
 
-async function classifyMessage(userText) {
+const DANGER_KEYWORDS = [
+  "痛い",
+  "痛み",
+  "腫れ",
+  "赤み",
+  "出血",
+  "膿",
+  "熱感",
+  "しびれ",
+  "違和感",
+  "おかしい",
+  "感染",
+  "アレルギー",
+  "息苦しい",
+  "苦しい",
+  "激痛",
+  "トラブル"
+];
+
+function isDangerousMessage(userText) {
+  return DANGER_KEYWORDS.some(keyword => userText.includes(keyword));
+}
+
+async function loadKnowledge() {
+  const res = await fetch(process.env.KNOWLEDGE_SHEET_URL);
+  if (!res.ok) {
+    throw new Error(`Knowledge fetch failed: ${res.status}`);
+  }
+  return await res.json();
+}
+
+function knowledgeToPromptText(knowledgeRows) {
+  return knowledgeRows
+    .map(row => `- [${row.category}] ${row.title}: ${row.value}`)
+    .join("\n");
+}
+
+async function generateAnswer(userText, knowledgeRows) {
+  const knowledgeText = knowledgeToPromptText(knowledgeRows);
+
   const prompt = `
-あなたは美容クリニックのLINE受付AIです。
-ユーザーのメッセージを次の5つのどれかに分類してください。
+あなたはLIF SKIN CLINICのLINE受付AIです。
+次の院内情報だけを使って、ユーザーに自然で丁寧な日本語で回答してください。
 
-- reserve
-- change
-- cancel
-- faq
-- handoff
+【院内情報】
+${knowledgeText}
 
-必ずJSONだけで返してください。
-形式:
-{"intent":"reserve","reply":""}
+【回答ルール】
+- 必ず院内情報の範囲内だけで答えてください
+- 情報にないことは、勝手に推測せず「スタッフが確認のうえご案内いたします」と伝えてください
+- 予約したい、予約変更したい、キャンセルしたいという内容なら、該当するURLを案内してください
+- 丁寧で簡潔に答えてください
+- 箇条書きにしなくてよい場合は自然な文章で返してください
+- 医学的判断はしないでください
 
-ルール:
-- 新規予約したい内容 → reserve
-- 予約変更したい内容 → change
-- 予約キャンセルしたい内容 → cancel
-- 一般的な質問（営業時間、場所、支払い方法など） → faq
-- 症状相談、術後トラブル、クレーム、個別判断が必要な内容、不明瞭な内容 → handoff
-- faq のときの reply は空文字でOK
-- faq 以外のときの reply も空文字でOK
-
-ユーザーのメッセージ:
+【ユーザーの質問】
 ${userText}
 `;
 
@@ -43,45 +74,30 @@ ${userText}
     input: prompt
   });
 
-  const text = response.output_text;
-
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    console.error("JSON parse error:", text);
-    return { intent: "handoff", reply: "" };
-  }
+  return response.output_text.trim();
 }
 
-async function loadFaqs() {
-  console.log("FAQ_SHEET_URL:", process.env.FAQ_SHEET_URL);
+async function sendLineReply(replyToken, text) {
+  const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [
+        {
+          type: "text",
+          text
+        }
+      ]
+    })
+  });
 
-  const res = await fetch(process.env.FAQ_SHEET_URL);
-  console.log("FAQ fetch status:", res.status);
-  console.log("FAQ fetch content-type:", res.headers.get("content-type"));
-
-  const rawText = await res.text();
-  console.log("FAQ raw first 200 chars:", rawText.slice(0, 200));
-
-  return JSON.parse(rawText);
-}
-
-function findFaqMatch(userText, faqs) {
-  const normalized = userText.toLowerCase().trim();
-
-  for (const faq of faqs) {
-    const keywords = String(faq.keywords || "")
-      .split(",")
-      .map(k => k.trim().toLowerCase())
-      .filter(Boolean);
-
-    const matched = keywords.some(keyword => normalized.includes(keyword));
-    if (matched) {
-      return faq;
-    }
-  }
-
-  return null;
+  const responseText = await lineResponse.text();
+  console.log("LINE reply status:", lineResponse.status);
+  console.log("LINE reply body:", responseText);
 }
 
 app.post("/webhook", async (req, res) => {
@@ -98,72 +114,23 @@ app.post("/webhook", async (req, res) => {
       const userText = event.message.text || "";
       const replyToken = event.replyToken;
 
-      let result;
+      let replyMessage = "";
 
-      try {
-        result = await classifyMessage(userText);
-      } catch (error) {
-        console.error("AI ERROR:", error);
-        result = { intent: "handoff", reply: "" };
-      }
-
-      console.log("AI分類結果:", result);
-
-      let replyMessage =
-        "個別確認が必要な内容のため、スタッフが確認のうえ順次ご返信いたします。";
-
-      if (result.intent === "reserve") {
+      if (isDangerousMessage(userText)) {
         replyMessage =
-          "ご予約をご希望ですね。\n下記ページより24時間ご予約いただけます。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
-      } else if (result.intent === "change") {
-        replyMessage =
-          "ご予約の変更をご希望ですね。\n下記ページよりお手続きをお願いいたします。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
-      } else if (result.intent === "cancel") {
-        replyMessage =
-          "ご予約のキャンセルをご希望ですね。\n下記ページよりお手続きをお願いいたします。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
-      } else if (result.intent === "faq") {
+          "症状や術後経過については個別確認が必要なため、スタッフが確認のうえ順次ご返信いたします。お急ぎの場合はお電話でもご連絡ください。";
+      } else {
         try {
-          const faqs = await loadFaqs();
-          const matchedFaq = findFaqMatch(userText, faqs);
-
-          if (matchedFaq) {
-            if (String(matchedFaq.handoff_flag).toLowerCase() === "yes") {
-              replyMessage =
-                "個別確認が必要な内容のため、スタッフが確認のうえ順次ご返信いたします。";
-            } else {
-              replyMessage = matchedFaq.answer || "詳細はスタッフがご案内いたします。";
-            }
-          } else {
-            replyMessage =
-              "該当するご案内が見つからなかったため、スタッフが確認のうえ順次ご返信いたします。";
-          }
+          const knowledgeRows = await loadKnowledge();
+          replyMessage = await generateAnswer(userText, knowledgeRows);
         } catch (error) {
-          console.error("FAQ ERROR:", error);
+          console.error("KNOWLEDGE / AI ERROR:", error);
           replyMessage =
             "現在システム調整中のため、スタッフが確認のうえ順次ご返信いたします。";
         }
       }
 
-      const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`
-        },
-        body: JSON.stringify({
-          replyToken,
-          messages: [
-            {
-              type: "text",
-              text: replyMessage
-            }
-          ]
-        })
-      });
-
-      const responseText = await lineResponse.text();
-      console.log("LINE reply status:", lineResponse.status);
-      console.log("LINE reply body:", responseText);
+      await sendLineReply(replyToken, replyMessage);
     }
 
     res.sendStatus(200);
