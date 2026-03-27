@@ -23,7 +23,7 @@ async function classifyMessage(userText) {
 
 必ずJSONだけで返してください。
 形式:
-{"intent":"reserve","reply":"..."}
+{"intent":"reserve","reply":""}
 
 ルール:
 - 新規予約したい内容 → reserve
@@ -31,8 +31,8 @@ async function classifyMessage(userText) {
 - 予約キャンセルしたい内容 → cancel
 - 一般的な質問（営業時間、場所、支払い方法など） → faq
 - 症状相談、術後トラブル、クレーム、個別判断が必要な内容、不明瞭な内容 → handoff
-- faq のときだけ、短い日本語の返信文を1つ作ってください
-- faq 以外のときの reply は空文字でOKです
+- faq のときの reply は空文字でOK
+- faq 以外のときの reply も空文字でOK
 
 ユーザーのメッセージ:
 ${userText}
@@ -49,11 +49,34 @@ ${userText}
     return JSON.parse(text);
   } catch (e) {
     console.error("JSON parse error:", text);
-    return {
-      intent: "handoff",
-      reply: ""
-    };
+    return { intent: "handoff", reply: "" };
   }
+}
+
+async function loadFaqs() {
+  const res = await fetch(process.env.FAQ_SHEET_URL);
+  if (!res.ok) {
+    throw new Error(`FAQ fetch failed: ${res.status}`);
+  }
+  return await res.json();
+}
+
+function findFaqMatch(userText, faqs) {
+  const normalized = userText.toLowerCase().trim();
+
+  for (const faq of faqs) {
+    const keywords = String(faq.keywords || "")
+      .split(",")
+      .map(k => k.trim().toLowerCase())
+      .filter(Boolean);
+
+    const matched = keywords.some(keyword => normalized.includes(keyword));
+    if (matched) {
+      return faq;
+    }
+  }
+
+  return null;
 }
 
 app.post("/webhook", async (req, res) => {
@@ -72,16 +95,13 @@ app.post("/webhook", async (req, res) => {
 
       let result;
 
-try {
-  result = await classifyMessage(userText);
-} catch (error) {
-  console.error("AI ERROR:", error);
+      try {
+        result = await classifyMessage(userText);
+      } catch (error) {
+        console.error("AI ERROR:", error);
+        result = { intent: "handoff", reply: "" };
+      }
 
-  result = {
-    intent: "handoff",
-    reply: ""
-  };
-}
       console.log("AI分類結果:", result);
 
       let replyMessage =
@@ -97,9 +117,26 @@ try {
         replyMessage =
           "ご予約のキャンセルをご希望ですね。\n下記ページよりお手続きをお願いいたします。\nhttps://connect.kireipass.jp/clinics/lif-skinclinic-azabu/menus";
       } else if (result.intent === "faq") {
-        replyMessage =
-          result.reply ||
-          "お問い合わせありがとうございます。詳細はスタッフが確認のうえご案内いたします。";
+        try {
+          const faqs = await loadFaqs();
+          const matchedFaq = findFaqMatch(userText, faqs);
+
+          if (matchedFaq) {
+            if (String(matchedFaq.handoff_flag).toLowerCase() === "yes") {
+              replyMessage =
+                "個別確認が必要な内容のため、スタッフが確認のうえ順次ご返信いたします。";
+            } else {
+              replyMessage = matchedFaq.answer || "詳細はスタッフがご案内いたします。";
+            }
+          } else {
+            replyMessage =
+              "該当するご案内が見つからなかったため、スタッフが確認のうえ順次ご返信いたします。";
+          }
+        } catch (error) {
+          console.error("FAQ ERROR:", error);
+          replyMessage =
+            "現在システム調整中のため、スタッフが確認のうえ順次ご返信いたします。";
+        }
       }
 
       const lineResponse = await fetch("https://api.line.me/v2/bot/message/reply", {
